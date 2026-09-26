@@ -1,0 +1,255 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  passwordHash String
+  role         String      @default("MEMBER") // MEMBER, ADMIN, SUPER_ADMIN
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  member       Member?
+  auditLogs    AuditLog[]  @relation("ActorAuditLogs")
+}
+
+model Member {
+  id                   String               @id @default(cuid())
+  userId               String               @unique
+  user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberCode           String               @unique
+  firstName            String
+  lastName             String
+  phone                String?
+  status               String               @default("ACTIVE") // ACTIVE, SUSPENDED, PENDING
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  sponsoredBy          SponsorRelationship? @relation("MemberReferred")
+  sponsoredMembers     SponsorRelationship[] @relation("MemberSponsor")
+
+  matrixPlacedUnder    MatrixPlacement?     @relation("ChildPlacement")
+  matrixChildren       MatrixPlacement[]    @relation("ParentPlacement")
+
+  wallets              MemberWallet[]
+  commissionAwards     CommissionAward[]
+  ledgerTransactions   LedgerTransaction[]
+  phases               MemberPhase[]
+  withdrawals          Withdrawal[]
+
+  sourceEvents         RewardEvent[]        @relation("SourceMember")
+  targetEvents         RewardEvent[]        @relation("TargetMember")
+}
+
+model SponsorRelationship {
+  id               String   @id @default(cuid())
+  sponsorId        String
+  sponsor          Member   @relation("MemberSponsor", fields: [sponsorId], references: [id], onDelete: Restrict)
+  referredMemberId String   @unique
+  referredMember   Member   @relation("MemberReferred", fields: [referredMemberId], references: [id], onDelete: Restrict)
+  createdAt        DateTime @default(now())
+}
+
+model MatrixPlacement {
+  id             String   @id @default(cuid())
+  parentMemberId String
+  parentMember   Member   @relation("ParentPlacement", fields: [parentMemberId], references: [id], onDelete: Restrict)
+  childMemberId  String   @unique
+  childMember    Member   @relation("ChildPlacement", fields: [childMemberId], references: [id], onDelete: Restrict)
+  position       Int
+  level          Int
+  createdAt      DateTime @default(now())
+
+  @@unique([parentMemberId, position])
+}
+
+model CompensationPlan {
+  id           String                    @id @default(cuid())
+  name         String
+  description  String?
+  matrixWidth  Int                       @default(5)
+  earningDepth Int                       @default(3)
+  status       String                    @default("DRAFT")
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  versions     CompensationPlanVersion[]
+}
+
+model CompensationPlanVersion {
+  id             String            @id @default(cuid())
+  planId         String
+  plan           CompensationPlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+  versionNumber  Int
+  status         String            @default("DRAFT")
+  effectiveFrom  DateTime?
+  effectiveTo    DateTime?
+  notes          String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  rules          CommissionRule[]
+  awards         CommissionAward[]
+
+  @@unique([planId, versionNumber])
+}
+
+model CommissionRule {
+  id                    String                  @id @default(cuid())
+  planVersionId         String
+  planVersion           CompensationPlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Cascade)
+  eventType             String
+  calculationType       String
+  value                 Decimal
+  calculationBasis      String                  @default("TOTAL_VALUE")
+  genealogyLevel        Int
+  walletAllocationsJson String
+  isActive              Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  awards                CommissionAward[]
+}
+
+model WalletDefinition {
+  id                     String   @id @default(cuid())
+  code                   String   @unique
+  name                   String
+  description            String?
+  isActive               Boolean  @default(true)
+  cap                    Decimal?
+  overflowDestinationCode String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model MemberWallet {
+  id            String   @id @default(cuid())
+  memberId      String
+  member        Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  walletCode    String
+  cachedBalance Decimal  @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([memberId, walletCode])
+}
+
+model RewardEvent {
+  id                String            @id @default(cuid())
+  eventType         String
+  sourceMemberId    String?
+  sourceMember      Member?           @relation("SourceMember", fields: [sourceMemberId], references: [id], onDelete: SetNull)
+  targetMemberId    String?
+  targetMember      Member?           @relation("TargetMember", fields: [targetMemberId], references: [id], onDelete: SetNull)
+  sourceSystem      String
+  externalReference String
+  monetaryBasis     Decimal           @default(0)
+  status            String            @default("PENDING")
+  metadataJson      String?
+  failureReason     String?
+  processedAt       DateTime?
+  createdAt         DateTime          @default(now())
+  commissionAwards  CommissionAward[]
+
+  @@unique([sourceSystem, externalReference])
+}
+
+model CommissionAward {
+  id                  String                  @id @default(cuid())
+  rewardEventId       String
+  rewardEvent         RewardEvent             @relation(fields: [rewardEventId], references: [id], onDelete: Cascade)
+  planVersionId       String
+  planVersion         CompensationPlanVersion @relation(fields: [planVersionId], references: [id], onDelete: Restrict)
+  ruleId              String
+  rule                CommissionRule          @relation(fields: [ruleId], references: [id], onDelete: Restrict)
+  memberId            String
+  member              Member                  @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  genealogyLevel      Int
+  amount              Decimal
+  walletBreakdownJson String
+  status              String                  @default("AWARDED")
+  createdAt           DateTime                @default(now())
+}
+
+model LedgerTransaction {
+  id                String   @id @default(cuid())
+  memberId          String
+  member            Member   @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  walletCode        String
+  amount            Decimal
+  direction         String
+  type              String
+  source            String
+  externalReference String?
+  description       String
+  actorUserId       String?
+  ruleId            String?
+  planVersionId     String?
+  rewardEventId     String?
+  createdAt         DateTime @default(now())
+}
+
+model PhaseDefinition {
+  id                     String        @id @default(cuid())
+  name                   String
+  ordering               Int           @unique
+  qualificationThreshold Decimal
+  qualificationMetric    String        @default("ACCUMULATED_EARNINGS")
+  benefitsDescription    String?
+  isActive               Boolean       @default(true)
+  effectiveFrom          DateTime?
+  effectiveTo            DateTime?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  memberPhases           MemberPhase[]
+}
+
+model MemberPhase {
+  id          String          @id @default(cuid())
+  memberId    String
+  member      Member          @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  phaseId     String
+  phase       PhaseDefinition @relation(fields: [phaseId], references: [id], onDelete: Restrict)
+  qualifiedAt DateTime        @default(now())
+  status      String          @default("ACTIVE")
+
+  @@unique([memberId, phaseId])
+}
+
+model Withdrawal {
+  id          String   @id @default(cuid())
+  memberId    String
+  member      Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  walletCode  String
+  amount      Decimal
+  status      String   @default("DISABLED")
+  reason      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String
+  actor       User     @relation("ActorAuditLogs", fields: [actorUserId], references: [id], onDelete: Cascade)
+  action      String
+  entityType  String
+  entityId    String?
+  detailsJson String
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+}
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  keyHash     String    @unique
+  name        String
+  prefix      String
+  isActive    Boolean   @default(true)
+  permissions String    @default("EVENTS_WRITE")
+  createdAt   DateTime  @default(now())
+  lastUsedAt  DateTime?
+}
